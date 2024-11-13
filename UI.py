@@ -246,7 +246,7 @@ root = tk.Tk()
 app = MatchingResultsApp(
     root,
     queries_file='./queries/M11207424_queries.txt',  # 假設搜尋詞在這個文件中
-    folder_v1='matching_results - v1.0',  # v1.0 資料夾
+    folder_v1='matching_results',  # 結果資料夾
     folder_example='matching_results - Example'  # Example 資料夾
 )
 root.mainloop()
