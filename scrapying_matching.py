@@ -19,7 +19,8 @@ from collections import Counter
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import pickle
-
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
 
 # %%
 
@@ -56,8 +57,8 @@ def scrapy_MOMO(keyword='鞋櫃', page=10, max_item_num=10000):
     df = pd.DataFrame(columns=['Title', 'Price'])
     item_number = 0
     for index in range(1, page + 1):
-        url = f'https: // m.momoshop.com.tw/search.momo?curPage = {
-            index} & searchKeyword = {keyword}'
+        url = f'https://m.momoshop.com.tw/search.momo?curPage={
+            index}&searchKeyword={keyword}'
         resp = requests.get(url, headers=headers)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, "lxml")
@@ -348,6 +349,88 @@ def ner_relevancy(df, index, all_results, check_att, margin, target_weights):
     return df
 
 
+def product_matching_Example():
+    for search_term in search_terms:
+        print(f'current term: {search_term}')
+
+        # special case
+        if search_term == '[馬玉山] 紫山藥黑米仁 (30g*12入/袋)':
+            search_term = '[馬玉山] 紫山藥黑米仁 (30gx12入x袋)'
+
+        # skip
+        t_matched_file_name = f'./{matched_results_folder}/{search_term}.csv'
+        if os.path.exists(t_matched_file_name):
+            print(f'file already exists: {t_matched_file_name}')
+            continue
+
+        # 從 CSV 讀取商品名稱
+        # Coupang 的搜尋結果
+        original_product_names = load_product_data(
+            f'./{coupang_searched_results_folder}/{student_id}_{search_term}.csv')
+        if original_product_names is None:
+            continue
+        product_names = [preprocess_name(name)
+                         for name in original_product_names]
+
+        # MOMO 爬取商品資料
+        momo_search_term = search_term
+        momo_products = scrapy_MOMO(momo_search_term)
+        original_momo_titles = momo_products['Title'].tolist()
+        momo_titles = [preprocess_name(title)
+                       for title in original_momo_titles]
+        # momo_search_term = refine_search_term(
+        #     product_names, NER_model, NER_tokenizer)
+        # if momo_search_term is None:
+        #     momo_search_term = search_term
+        # print(momo_search_term)
+        # momo_products = scrapy_MOMO(momo_search_term)
+        # momo_products_2 = scrapy_MOMO(search_term)
+        # original_momo_titles = momo_products['Title'].tolist()
+        # original_momo_titles.extend(momo_products_2['Title'].tolist())
+        # momo_titles = [preprocess_name(title)
+        #                for title in momo_products['Title'].tolist()]
+
+        # 嵌入 MOMO 商品名稱
+        if not momo_titles:
+            print(f'search term: {momo_search_term} is empty')
+            continue
+
+        momo_embeddings = inference(tokenizer, model, momo_titles)
+        product_embeddings = inference(tokenizer, model, product_names)
+
+        # 匹配商品並生成 DataFrame
+        all_products = []
+
+        for momo_title, momo_embedding, original_momo_title in tqdm(zip(momo_titles, momo_embeddings, original_momo_titles), desc="匹配中"):
+            max_similarity = 0
+            best_match = None
+            for product_name, product_embedding, original_product_name in zip(product_names, product_embeddings, original_product_names):
+                similarity = cosine_similarity(
+                    momo_embedding, product_embedding)
+                if similarity > max_similarity:
+                    max_similarity = similarity
+                    best_match = original_product_name
+            if max_similarity >= threshold:
+                all_products.append(
+                    (original_momo_title, best_match, max_similarity))
+            else:
+                all_products.append((original_momo_title, None, None))
+
+        # 統一 DataFrame 結構
+        matched_products = [
+            item for item in all_products if item[1] is not None]
+        unmatched_products = [item for item in all_products if item[1] is None]
+        final_df = pd.DataFrame(matched_products + unmatched_products,
+                                columns=['MOMO Title', 'Product Title', 'Similarity'])
+
+        output_folder = matched_results_folder
+        os.makedirs(output_folder, exist_ok=True)
+
+        output_file_path = os.path.join(output_folder, f'{search_term}.csv')
+        final_df.to_csv(output_file_path, index=False, encoding='utf-8')
+        print(f'檔案已儲存至 {output_file_path}')
+
+
 def product_matching():
     for search_term in search_terms:
         print(f'current term: {search_term}')
@@ -500,21 +583,34 @@ def product_matching_v2():
             continue
 
         # Filter words with TF-IDF
-        filtered_momo_titles = filter_important_words(
-            momo_titles, tfidf_vectorizer)
-        filtered_product_names = filter_important_words(
-            product_names, tfidf_vectorizer)
+        # filtered_momo_titles = filter_important_words(
+        #     momo_titles, tfidf_vectorizer)
+        # filtered_product_names = filter_important_words(
+        #     product_names, tfidf_vectorizer)
+
+        # print('='*80)
+        # print(f'type of filter_momo_titles: {type(filtered_momo_titles)}')
+        # print(f'filtered_momo_titles: {filtered_momo_titles}')
+        # print(f'type of filtered_product_names: {
+        #       type(filtered_product_names)}')
+        # print(f'filtered_product_names: {filtered_product_names}')
+        # print('='*80)
 
         # Get NER tags for both MOMO and Coupang products
         momo_ner = inference_api.get_ner_tags(
-            NER_model, NER_tokenizer, filtered_momo_titles, all_attribute)
+            NER_model, NER_tokenizer, momo_titles, all_attribute)
         product_ner = inference_api.get_ner_tags(
-            NER_model, NER_tokenizer, filtered_product_names, all_attribute)
+            NER_model, NER_tokenizer, product_names, all_attribute)
+
+        # print('='*80)
+        # print(f'momo_ner: {momo_ner}')
+        # print(f'product_ner: {product_ner}')
+        # print('='*80)
 
         # Compute embeddings
-        momo_embeddings = inference(tokenizer, model, filtered_momo_titles)
+        momo_embeddings = inference(tokenizer, model, momo_titles)
         product_embeddings = inference(
-            tokenizer, model, filtered_product_names)
+            tokenizer, model, product_names)
 
         all_products = []
 
@@ -523,14 +619,34 @@ def product_matching_v2():
             best_match = None
             max_score = 0
 
+            momo_tags = momo_ner[momo_tags]
+
+            if not isinstance(momo_tags, dict):
+                print(f"Unexpected NER format for {momo_title}: {momo_tags}")
+                print(f'type of momo_tags: {type(momo_tags)}')
+                # continue
+
             for product_name, product_embedding, product_tags in zip(product_names, product_embeddings, product_ner):
                 attribute_score = 0
                 matched_attributes = 0
+
+                product_tags = product_ner[product_tags]
+
+                if not isinstance(product_tags, dict):
+                    print(f"Unexpected NER format for {
+                          product_name}: {product_tags}")
+                    print(f'type of momo_tags: {type(product_tags)}')
 
                 # For each attribute, calculate semantic similarity
                 for attribute, momo_attr_values in momo_tags.items():
                     if attribute in product_tags:
                         product_attr_values = product_tags[attribute]
+
+                        print('='*80)
+                        print(f'Attribute: {attribute}')
+                        print(f'momo_attr_values: {momo_attr_values}')
+                        print(f'product_attr_values: {product_attr_values}')
+                        print('='*80)
 
                         # Compare attribute values for similarity
                         for (momo_value, momo_conf), (product_value, product_conf) in zip(momo_attr_values, product_attr_values):
@@ -571,14 +687,12 @@ def product_matching_v2():
 
 
 # %% 主程式邏輯
+# student_id = 'M11207321'
 student_id = 'M11207424'
-threshold = 0.4
-# 儲存 coupang 搜尋結果的資料夾
+threshold = 0.9
 coupang_searched_results_folder = 'coupang_search_results_M11207424'
-# momo 搜尋結果
-momo_searched_results_folder = 'momo_search_results_100'
-# 匹配結果
-matched_results_folder = 'matching_results'
+momo_searched_results_folder = 'momo_search_results - v1.0'
+matched_results_folder = 'matching_results - Example'
 
 # 使用 jieba_tokenizer 進行分詞
 tokenizer = jieba_tokenizer
@@ -612,4 +726,4 @@ attribute_weights = {
 search_terms = load_search_terms(f'./queries/{student_id}_queries.txt')
 
 # %% 進行匹配流程
-product_matching()
+product_matching_Example()
