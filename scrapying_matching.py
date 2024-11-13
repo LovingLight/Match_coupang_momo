@@ -36,7 +36,7 @@ def get_semantic_model():
 # %%
 
 
-def scrapy_MOMO(keyword='鞋櫃', page=10, max_item_num=10000):
+def scrapy_MOMO(keyword='鞋櫃', page=5, max_item_num=30):
     file_path = f'./{momo_searched_results_folder}/momo_{keyword}.csv'
     if os.path.exists(file_path):
         df = pd.read_csv(file_path)
